@@ -8,6 +8,7 @@ use serde::Serialize;
 
 use crate::manifest::{DownloadStep, ExtractStep, Step, TemplateConfigStep};
 use crate::planner::{InstallPlan, PlannedStep};
+use crate::runtime_env::{ExecutionContext, prepare_runtime_env};
 
 #[derive(Debug, Serialize)]
 pub struct ExecutionResult {
@@ -32,6 +33,8 @@ pub fn execute_plan(plan: &InstallPlan) -> Result<ExecutionResult, ExecutionErro
         plan.steps.len()
     );
 
+    let context = prepare_runtime_env(plan).map_err(ExecutionError::Other)?;
+
     for (idx, step) in plan.steps.iter().enumerate() {
         println!(
             "==> [{}/{}] {}",
@@ -39,7 +42,7 @@ pub fn execute_plan(plan: &InstallPlan) -> Result<ExecutionResult, ExecutionErro
             plan.steps.len(),
             step.description
         );
-        if let Err(err) = execute_step(&plan.os, step) {
+        if let Err(err) = execute_step(&plan.os, step, context.as_ref()) {
             return Err(match err {
                 ExecutionError::StepFailed { .. } => err,
                 ExecutionError::Other(source) => ExecutionError::StepFailed {
@@ -56,9 +59,13 @@ pub fn execute_plan(plan: &InstallPlan) -> Result<ExecutionResult, ExecutionErro
     })
 }
 
-fn execute_step(os: &str, step: &PlannedStep) -> Result<(), ExecutionError> {
+fn execute_step(
+    os: &str,
+    step: &PlannedStep,
+    ctx: Option<&ExecutionContext>,
+) -> Result<(), ExecutionError> {
     match &step.step {
-        Step::Run { run } => run_command(os, run).map_err(|err| ExecutionError::StepFailed {
+        Step::Run { run } => run_command(os, run, ctx).map_err(|err| ExecutionError::StepFailed {
             index: step.index,
             message: err.to_string(),
         }),
@@ -83,16 +90,23 @@ fn execute_step(os: &str, step: &PlannedStep) -> Result<(), ExecutionError> {
     }
 }
 
-fn run_command(os: &str, command: &str) -> anyhow::Result<()> {
+fn run_command(os: &str, command: &str, ctx: Option<&ExecutionContext>) -> anyhow::Result<()> {
     let shell = if os == "windows" {
         ("cmd", vec!["/C"])
     } else {
         ("/bin/sh", vec!["-c"])
     };
 
-    let status = Command::new(shell.0)
-        .args(&shell.1)
-        .arg(command)
+    let mut cmd = Command::new(shell.0);
+    cmd.args(&shell.1).arg(command);
+
+    if let Some(ctx) = ctx {
+        for (key, value) in &ctx.env {
+            cmd.env(key, value);
+        }
+    }
+
+    let status = cmd
         .status()
         .with_context(|| format!("running shell command: {command}"))?;
 

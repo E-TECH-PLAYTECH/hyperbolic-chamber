@@ -17,6 +17,8 @@ pub struct Manifest {
 pub struct Mode {
     pub requirements: Option<Requirements>,
     pub steps: BTreeMap<String, Vec<Step>>,
+    #[serde(default)]
+    pub runtime_env: Option<RuntimeEnv>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -71,6 +73,43 @@ pub struct TemplateConfigStep {
     pub dest: PathBuf,
     #[serde(default)]
     pub vars: HashMap<String, String>,
+}
+
+fn default_runtime_root() -> PathBuf {
+    PathBuf::from(".enzyme_env")
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RuntimeEnv {
+    #[serde(rename = "type")]
+    pub kind: RuntimeEnvType,
+    #[serde(default = "default_runtime_root")]
+    pub root: PathBuf,
+    #[serde(default)]
+    pub node: Option<NodeRuntime>,
+    #[serde(default)]
+    pub python: Option<PythonRuntime>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeEnvType {
+    NodeLocal,
+    PythonVenv,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct NodeRuntime {
+    pub version: Option<String>,
+    #[serde(default)]
+    pub install_strategy: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct PythonRuntime {
+    pub version: Option<String>,
+    #[serde(default)]
+    pub install_strategy: Option<String>,
 }
 
 impl Step {
@@ -244,6 +283,10 @@ fn validate_manifest(manifest: Manifest) -> Result<Manifest, ManifestValidationE
                 })?;
             }
         }
+
+        if let Some(runtime_env) = &mode.runtime_env {
+            validate_runtime_env(mode_name, runtime_env)?;
+        }
     }
 
     Ok(manifest)
@@ -256,6 +299,39 @@ fn validate_os_family(os: &str) -> Result<(), ManifestValidationError> {
             other.to_string(),
         )),
     }
+}
+
+fn validate_runtime_env(
+    mode_name: &str,
+    runtime: &RuntimeEnv,
+) -> Result<(), ManifestValidationError> {
+    if runtime.root.as_os_str().is_empty() {
+        return Err(ManifestValidationError::InvalidRequirement(
+            mode_name.to_string(),
+            "runtime_env root cannot be empty".to_string(),
+        ));
+    }
+
+    match runtime.kind {
+        RuntimeEnvType::NodeLocal => {
+            if runtime.node.is_none() {
+                return Err(ManifestValidationError::InvalidRequirement(
+                    mode_name.to_string(),
+                    "runtime_env.node must be provided for node_local".to_string(),
+                ));
+            }
+        }
+        RuntimeEnvType::PythonVenv => {
+            if runtime.python.is_none() {
+                return Err(ManifestValidationError::InvalidRequirement(
+                    mode_name.to_string(),
+                    "runtime_env.python must be provided for python_venv".to_string(),
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
