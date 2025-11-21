@@ -12,12 +12,28 @@
         "windows": [
           { "run": "winget install --id PostgreSQL.PostgreSQL --source winget" },
           { "run": "winget install --id OpenJS.NodeJS.LTS" },
-          { "run": "git clone https://github.com/example/keanu.git" },
+          { "download": { "url": "https://example.com/keanu.zip", "dest": "artifacts/keanu.zip" } },
+          { "extract": { "archive": "artifacts/keanu.zip", "dest": "keanu" } },
+          {
+            "template_config": {
+              "source": "config/app.env.template",
+              "dest": "keanu/.env",
+              "vars": { "APP_NAME": "keanu-chronicle", "PORT": "3000" }
+            }
+          },
           { "run": "cd keanu && npm install && npm run build" }
         ],
         "macos": [
           { "run": "brew install postgresql@16 node" },
-          { "run": "git clone https://github.com/example/keanu.git" },
+          { "download": { "url": "https://example.com/keanu.zip", "dest": "artifacts/keanu.zip" } },
+          { "extract": { "archive": "artifacts/keanu.zip", "dest": "keanu" } },
+          {
+            "template_config": {
+              "source": "config/app.env.template",
+              "dest": "keanu/.env",
+              "vars": { "APP_NAME": "keanu-chronicle", "PORT": "3000" }
+            }
+          },
           { "run": "cd keanu && npm install && npm run build" }
         ]
       }

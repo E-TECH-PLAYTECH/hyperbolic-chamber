@@ -4,9 +4,9 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::env_detect::Environment;
-use crate::manifest::{Manifest, Mode};
+use crate::manifest::{Manifest, Mode, Step};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct InstallPlan {
     pub app_name: String,
     pub app_version: String,
@@ -15,10 +15,14 @@ pub struct InstallPlan {
     pub steps: Vec<PlannedStep>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct PlannedStep {
     pub description: String,
-    pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    pub step: Step,
+    #[serde(skip)]
+    pub index: usize,
 }
 
 #[derive(Debug, Error)]
@@ -59,9 +63,12 @@ pub fn plan_install(manifest: &Manifest, env: &Environment) -> Result<InstallPla
         .get(&env.os)
         .expect("validated in compatibility check")
         .iter()
-        .map(|step| PlannedStep {
+        .enumerate()
+        .map(|(idx, step)| PlannedStep {
             description: step.description(),
             command: step.command(),
+            step: step.clone(),
+            index: idx,
         })
         .collect();
 
@@ -181,7 +188,11 @@ fn compare_versions(a: &[u64], b: &[u64]) -> Ordering {
 
 #[cfg(test)]
 mod tests {
-    use super::{compare_versions, parse_version, version_meets};
+    use std::collections::BTreeMap;
+
+    use super::{compare_versions, parse_version, plan_install, version_meets};
+    use crate::env_detect::Environment;
+    use crate::manifest::{Manifest, Mode, Requirements, Step, parse_os_constraint};
 
     #[test]
     fn compares_versions_with_padding() {
@@ -199,5 +210,122 @@ mod tests {
     #[test]
     fn parse_version_rejects_invalid_numbers() {
         assert!(parse_version("10.x").is_none());
+    }
+
+    fn base_env() -> Environment {
+        Environment {
+            os: "macos".to_string(),
+            os_version: "14.0".to_string(),
+            cpu_arch: "arm64".to_string(),
+            ram_gb: 16,
+            pkg_managers: vec![],
+        }
+    }
+
+    fn manifest_with_modes(full_ram: u64, light_ram: u64) -> Manifest {
+        let mut modes = BTreeMap::new();
+        modes.insert(
+            "full".to_string(),
+            Mode {
+                requirements: Some(Requirements {
+                    os: vec![parse_os_constraint("macos>=13").unwrap()],
+                    cpu_arch: vec!["arm64".to_string()],
+                    ram_gb: Some(full_ram),
+                }),
+                steps: {
+                    let mut steps = BTreeMap::new();
+                    steps.insert(
+                        "macos".to_string(),
+                        vec![Step::Run {
+                            run: "echo full".into(),
+                        }],
+                    );
+                    steps
+                },
+            },
+        );
+        modes.insert(
+            "light".to_string(),
+            Mode {
+                requirements: Some(Requirements {
+                    os: vec![parse_os_constraint("macos>=12").unwrap()],
+                    cpu_arch: vec![],
+                    ram_gb: Some(light_ram),
+                }),
+                steps: {
+                    let mut steps = BTreeMap::new();
+                    steps.insert(
+                        "macos".to_string(),
+                        vec![Step::Run {
+                            run: "echo light".into(),
+                        }],
+                    );
+                    steps
+                },
+            },
+        );
+
+        Manifest {
+            name: "demo".into(),
+            version: "1.0.0".into(),
+            modes,
+        }
+    }
+
+    #[test]
+    fn prefers_full_when_multiple_modes_compatible() {
+        let manifest = manifest_with_modes(8, 4);
+        let env = base_env();
+
+        let plan = plan_install(&manifest, &env).expect("plan should succeed");
+        assert_eq!(plan.chosen_mode, "full");
+    }
+
+    #[test]
+    fn falls_back_to_light_when_resources_lower() {
+        let manifest = manifest_with_modes(12, 4);
+        let mut env = base_env();
+        env.ram_gb = 8;
+
+        let plan = plan_install(&manifest, &env).expect("plan should succeed");
+        assert_eq!(plan.chosen_mode, "light");
+    }
+
+    #[test]
+    fn surfaces_reasons_when_no_modes_match() {
+        let manifest = manifest_with_modes(32, 16);
+        let mut env = base_env();
+        env.os_version = "11.0".into();
+        env.ram_gb = 8;
+
+        let err = plan_install(&manifest, &env).expect_err("planning should fail");
+        match err {
+            super::PlannerError::NoCompatibleMode { reasons, .. } => {
+                assert!(reasons.iter().any(|r| r.contains("requires")));
+            }
+        }
+    }
+
+    #[test]
+    fn parses_manifest_json_into_steps() {
+        let json = r#"{
+            "name": "templated",
+            "version": "2.0.0",
+            "modes": {
+                "full": {
+                    "steps": {
+                        "macos": [
+                            {"run": "echo hi"},
+                            {"download": {"url": "https://example.com/file", "dest": "downloads/file.zip"}}
+                        ]
+                    }
+                }
+            }
+        }"#;
+
+        let manifest: Manifest = serde_json::from_str(json).expect("manifest should parse");
+        let steps = &manifest.modes.get("full").unwrap().steps["macos"];
+        assert!(matches!(steps[0], Step::Run { .. }));
+        assert!(matches!(steps[1], Step::Download { .. }));
     }
 }

@@ -1,6 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -48,6 +48,29 @@ impl<'de> Deserialize<'de> for OsConstraint {
 #[serde(untagged)]
 pub enum Step {
     Run { run: String },
+    Download { download: DownloadStep },
+    Extract { extract: ExtractStep },
+    TemplateConfig { template_config: TemplateConfigStep },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DownloadStep {
+    pub url: String,
+    pub dest: PathBuf,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ExtractStep {
+    pub archive: PathBuf,
+    pub dest: PathBuf,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TemplateConfigStep {
+    pub source: PathBuf,
+    pub dest: PathBuf,
+    #[serde(default)]
+    pub vars: HashMap<String, String>,
 }
 
 impl Step {
@@ -56,6 +79,32 @@ impl Step {
             Step::Run { run } if run.trim().is_empty() => Err(
                 ManifestValidationError::InvalidStep("run command cannot be empty".to_string()),
             ),
+            Step::Download { download } if download.url.trim().is_empty() => Err(
+                ManifestValidationError::InvalidStep("download url cannot be empty".to_string()),
+            ),
+            Step::Download { download } if download.dest.as_os_str().is_empty() => Err(
+                ManifestValidationError::InvalidStep("download dest cannot be empty".to_string()),
+            ),
+            Step::Extract { extract } if extract.archive.as_os_str().is_empty() => Err(
+                ManifestValidationError::InvalidStep("extract archive cannot be empty".to_string()),
+            ),
+            Step::Extract { extract } if extract.dest.as_os_str().is_empty() => Err(
+                ManifestValidationError::InvalidStep("extract dest cannot be empty".to_string()),
+            ),
+            Step::TemplateConfig { template_config }
+                if template_config.source.as_os_str().is_empty() =>
+            {
+                Err(ManifestValidationError::InvalidStep(
+                    "template_config source cannot be empty".to_string(),
+                ))
+            }
+            Step::TemplateConfig { template_config }
+                if template_config.dest.as_os_str().is_empty() =>
+            {
+                Err(ManifestValidationError::InvalidStep(
+                    "template_config dest cannot be empty".to_string(),
+                ))
+            }
             _ => Ok(()),
         }
     }
@@ -63,12 +112,28 @@ impl Step {
     pub fn description(&self) -> String {
         match self {
             Step::Run { run } => format!("Run: {run}"),
+            Step::Download { download } => {
+                format!("Download {} to {}", download.url, download.dest.display())
+            }
+            Step::Extract { extract } => {
+                format!(
+                    "Extract {} to {}",
+                    extract.archive.display(),
+                    extract.dest.display()
+                )
+            }
+            Step::TemplateConfig { template_config } => format!(
+                "Template {} to {}",
+                template_config.source.display(),
+                template_config.dest.display()
+            ),
         }
     }
 
-    pub fn command(&self) -> String {
+    pub fn command(&self) -> Option<String> {
         match self {
-            Step::Run { run } => run.clone(),
+            Step::Run { run } => Some(run.clone()),
+            _ => None,
         }
     }
 }
