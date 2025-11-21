@@ -4,7 +4,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::env_detect::Environment;
-use crate::manifest::{Manifest, Mode, Step};
+use crate::manifest::{Manifest, Mode, RuntimeEnv, Step};
 
 #[derive(Debug, Serialize, Clone)]
 pub struct InstallPlan {
@@ -12,6 +12,8 @@ pub struct InstallPlan {
     pub app_version: String,
     pub chosen_mode: String,
     pub os: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_env: Option<RuntimeEnv>,
     pub steps: Vec<PlannedStep>,
 }
 
@@ -77,6 +79,7 @@ pub fn plan_install(manifest: &Manifest, env: &Environment) -> Result<InstallPla
         app_version: manifest.version.clone(),
         chosen_mode: chosen.0.clone(),
         os: env.os.clone(),
+        runtime_env: chosen.1.runtime_env.clone(),
         steps,
     })
 }

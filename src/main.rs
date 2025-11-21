@@ -1,12 +1,5 @@
-mod cli;
-mod env_detect;
-mod executor;
-mod manifest;
-mod planner;
-mod state;
-
 fn main() {
-    let code = cli::run();
+    let code = enzyme_installer::run_cli();
     if code != 0 {
         std::process::exit(code);
     }

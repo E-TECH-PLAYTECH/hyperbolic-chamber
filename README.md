@@ -4,7 +4,7 @@ Adaptive, cross-platform installer CLI that turns declarative manifests into det
 
 ## Features
 
-- Environment detection that captures OS family/version, CPU architecture, RAM, and common package managers.
+- Environment detection that captures OS family/version, CPU architecture, RAM, common package managers, and a machine fingerprint for license hooks.
 - Manifest-driven planning with deterministic mode selection and clear failure reasons.
 - Plan execution via platform-appropriate shells with streaming stdout/stderr and rich step primitives.
 - Extensible data model with downloads, archive extraction, and templated config rendering.
@@ -75,6 +75,50 @@ Supported steps:
   Renders a text template by substituting `{{VAR}}` placeholders with provided values.
 
 Existing manifests that only contain `run` steps continue to work without modification.
+
+### Virtual runtimes (v3)
+
+Each mode can declare a `runtime_env` describing an isolated runtime to prepare before running steps. The feature is additive and optional:
+
+```json
+{
+  "modes": {
+    "full": {
+      "runtime_env": {
+        "type": "node_local",
+        "root": ".enzyme_env",
+        "node": {
+          "version": "20.11.0",
+          "install_strategy": "local_bundle_or_global"
+        }
+      },
+      "steps": {
+        "macos": [ {"run": "node --version"} ]
+      }
+    },
+    "light": {
+      "runtime_env": {
+        "type": "python_venv",
+        "root": ".enzyme_env",
+        "python": {
+          "version": "3.11",
+          "install_strategy": "venv_or_global"
+        }
+      },
+      "steps": {
+        "macos": [ {"run": "python -m pip --version"} ]
+      }
+    }
+  }
+}
+```
+
+- `node_local` prepares a per-app Node.js directory under `root/node` and prefers a locally provisioned binary. If none is present, the installer falls back to a compatible global `node` when allowed by `install_strategy`.
+- `python_venv` creates a virtual environment at `root/venv` using `python3` (or `py` on Windows) and runs subsequent steps inside it.
+
+### Fingerprints
+
+Environment detection now surfaces a fingerprint containing OS, version, architecture, RAM, hostname (when available), and a stable SHA-256 hash over those fields. Use `enzyme-installer detect --json` to inspect the structure when integrating licensing or per-machine bundle logic.
 
 ## Install state and reporting
 
